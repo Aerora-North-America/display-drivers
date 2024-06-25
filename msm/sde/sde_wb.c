@@ -76,6 +76,7 @@ int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
 	SDE_DEBUG("\n");
 
 	mutex_lock(&wb_dev->wb_lock);
+
 	if (wb_dev->count_modes && wb_dev->modes) {
 		struct drm_display_mode *mode;
 		int i, ret;
@@ -94,6 +95,19 @@ int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
 			}
 
 			drm_mode_probed_add(connector, mode);
+			num_modes++;
+		}
+	} else if (!list_empty(&wb_dev->mode_list)) {
+		struct drm_display_mode *mode, *m;
+
+		list_for_each_entry(mode, &wb_dev->mode_list, head) {
+			m = drm_mode_duplicate(connector->dev, mode);
+			if (!m) {
+				SDE_ERROR("failed to allocate memory and add mode %dx%d\n",
+						mode->hdisplay, mode->vdisplay);
+				break;
+			}
+			drm_mode_probed_add(connector, m);
 			num_modes++;
 		}
 	} else {
@@ -738,6 +752,155 @@ int sde_wb_drm_deinit(struct sde_wb_device *wb_dev)
 }
 
 /**
+ * sde_wb_parse_dt_modes - load display modes from devictree
+ */
+static void sde_wb_parse_dt_modes(struct device_node* np,
+					struct list_head *head, u32 *num_of_modes)
+{
+	int rc = 0;
+	struct drm_display_mode *mode;
+	u32 mode_count = 0;
+	struct device_node *node = NULL;
+	struct device_node *root_node = NULL;
+	u32 h_front_porch, h_pulse_width, h_back_porch;
+	u32 v_front_porch, v_pulse_width, v_back_porch;
+	bool h_active_high, v_active_high;
+	u32 flags = 0;
+
+	root_node = of_get_child_by_name(np, "qcom,display-modes");
+	if (!root_node) {
+		root_node = of_parse_phandle(np, "qcom,display-modes", 0);
+		if (!root_node) {
+			SDE_INFO("No entry present for qcom,display-modes\n");
+			return;
+		}
+	}
+
+	for_each_child_of_node(root_node, node) {
+		rc = 0;
+		mode = kzalloc(sizeof(*mode), GFP_KERNEL);
+		if (!mode) {
+			SDE_ERROR("Out of memory\n");
+			rc =  -ENOMEM;
+			continue;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-h-active",
+						&mode->hdisplay);
+		if (rc) {
+			SDE_ERROR("failed to read h-active, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-h-front-porch",
+						&h_front_porch);
+		if (rc) {
+			SDE_ERROR("failed to read h-front-porch, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-h-pulse-width",
+						&h_pulse_width);
+		if (rc) {
+			SDE_ERROR("failed to read h-pulse-width, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-h-back-porch",
+						&h_back_porch);
+		if (rc) {
+			SDE_ERROR("failed to read h-back-porch, rc=%d\n", rc);
+			goto fail;
+		}
+
+		h_active_high = of_property_read_bool(node,
+						"qcom,mode-h-active-high");
+
+		rc = of_property_read_u32(node, "qcom,mode-v-active",
+						&mode->vdisplay);
+		if (rc) {
+			SDE_ERROR("failed to read v-active, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-v-front-porch",
+						&v_front_porch);
+		if (rc) {
+			SDE_ERROR("failed to read v-front-porch, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-v-pulse-width",
+						&v_pulse_width);
+		if (rc) {
+			SDE_ERROR("failed to read v-pulse-width, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-v-back-porch",
+						&v_back_porch);
+		if (rc) {
+			SDE_ERROR("failed to read v-back-porch, rc=%d\n", rc);
+			goto fail;
+		}
+
+		v_active_high = of_property_read_bool(node,
+						"qcom,mode-v-active-high");
+
+		rc = of_property_read_u32(node, "qcom,mode-refresh-rate",
+						&mode->vrefresh);
+		if (rc) {
+			SDE_ERROR("failed to read refresh-rate, rc=%d\n", rc);
+			goto fail;
+		}
+
+		rc = of_property_read_u32(node, "qcom,mode-clock-in-khz",
+						&mode->clock);
+		if (rc) {
+			SDE_ERROR("failed to read clock, rc=%d\n", rc);
+			goto fail;
+		}
+
+		mode->hsync_start = mode->hdisplay + h_front_porch;
+		mode->hsync_end = mode->hsync_start + h_pulse_width;
+		mode->htotal = mode->hsync_end + h_back_porch;
+		mode->vsync_start = mode->vdisplay + v_front_porch;
+		mode->vsync_end = mode->vsync_start + v_pulse_width;
+		mode->vtotal = mode->vsync_end + v_back_porch;
+		if (h_active_high)
+			flags |= DRM_MODE_FLAG_PHSYNC;
+		else
+			flags |= DRM_MODE_FLAG_NHSYNC;
+		if (v_active_high)
+			flags |= DRM_MODE_FLAG_PVSYNC;
+		else
+			flags |= DRM_MODE_FLAG_NVSYNC;
+		mode->flags = flags;
+
+		if (!rc) {
+			mode_count++;
+			list_add_tail(&mode->head, head);
+		}
+
+		drm_mode_set_name(mode);
+
+		SDE_INFO("mode[%s] h[%d,%d,%d,%d] v[%d,%d,%d,%d] %d %x %dkHZ\n",
+			mode->name, mode->hdisplay, mode->hsync_start,
+			mode->hsync_end, mode->htotal, mode->vdisplay,
+			mode->vsync_start, mode->vsync_end, mode->vtotal,
+			mode->vrefresh, mode->flags, mode->clock);
+fail:
+		if (rc) {
+			kfree(mode);
+			continue;
+		}
+	}
+
+	if (num_of_modes)
+		*num_of_modes = mode_count;
+}
+
+/**
  * sde_wb_probe - load writeback module
  * @pdev:	Pointer to platform device
  */
@@ -765,6 +928,9 @@ static int sde_wb_probe(struct platform_device *pdev)
 		wb_dev->name = "unknown";
 	}
 
+	INIT_LIST_HEAD(&wb_dev->mode_list);
+	sde_wb_parse_dt_modes(pdev->dev.of_node, &wb_dev->mode_list, NULL);
+
 	wb_dev->wb_idx = SDE_NONE;
 
 	mutex_init(&wb_dev->wb_lock);
@@ -791,6 +957,7 @@ static int sde_wb_remove(struct platform_device *pdev)
 {
 	struct sde_wb_device *wb_dev;
 	struct sde_wb_device *curr, *next;
+	struct drm_display_mode *m, *n;
 
 	wb_dev = platform_get_drvdata(pdev);
 	if (!wb_dev)
@@ -810,6 +977,10 @@ static int sde_wb_remove(struct platform_device *pdev)
 	mutex_unlock(&sde_wb_list_lock);
 
 	kfree(wb_dev->modes);
+	list_for_each_entry_safe(m, n, &wb_dev->mode_list, head) {
+		list_del(&m->head);
+		kfree(m);
+	}
 	mutex_destroy(&wb_dev->wb_lock);
 
 	platform_set_drvdata(pdev, NULL);

@@ -27,6 +27,7 @@
  * @max_mixer_width:    Max width supported by SDE LM HW block
  * @count_modes:	Length of writeback connector modes array
  * @modes:		Writeback connector modes array
+ * @mode_list:          List of drm_display_mode parsed from DT
  */
 struct sde_wb_device {
 	struct drm_device *drm_dev;
@@ -47,6 +48,8 @@ struct sde_wb_device {
 
 	u32 count_modes;
 	struct drm_mode_modeinfo *modes;
+
+	struct list_head mode_list;
 };
 
 /**
