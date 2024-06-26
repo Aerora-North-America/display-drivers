@@ -764,7 +764,7 @@ static void sde_wb_parse_dt_modes(struct device_node* np,
 	struct device_node *root_node = NULL;
 	u32 h_front_porch, h_pulse_width, h_back_porch;
 	u32 v_front_porch, v_pulse_width, v_back_porch;
-	bool h_active_high, v_active_high;
+	bool h_active_high, v_active_high, preferred_mode;
 	u32 flags = 0;
 
 	root_node = of_get_child_by_name(np, "qcom,display-modes");
@@ -861,6 +861,9 @@ static void sde_wb_parse_dt_modes(struct device_node* np,
 			goto fail;
 		}
 
+		preferred_mode = of_property_read_bool(node,
+						"qcom,preferred_mode");
+
 		mode->hsync_start = mode->hdisplay + h_front_porch;
 		mode->hsync_end = mode->hsync_start + h_pulse_width;
 		mode->htotal = mode->hsync_end + h_back_porch;
@@ -875,6 +878,8 @@ static void sde_wb_parse_dt_modes(struct device_node* np,
 			flags |= DRM_MODE_FLAG_PVSYNC;
 		else
 			flags |= DRM_MODE_FLAG_NVSYNC;
+		if (preferred_mode)
+			mode->type |= DRM_MODE_TYPE_PREFERRED;
 		mode->flags = flags;
 
 		if (!rc) {
