@@ -1279,6 +1279,8 @@ static int _sde_crtc_validate_src_split_order(struct drm_crtc *crtc,
 			  "invalid src split cfg, stage:%d left:%d right:%d\n",
 				stage, left_pid, right_pid);
 			return -EINVAL;
+#if 0
+		//// FIXME:
 		} else if (right_rect.x != (left_rect.x + left_rect.w)) {
 			SDE_ERROR(
 			  "invalid coordinates, stage:%d l:%d-%d r:%d-%d\n",
@@ -1292,6 +1294,7 @@ static int _sde_crtc_validate_src_split_order(struct drm_crtc *crtc,
 				stage, left_rect.y, left_rect.h,
 				right_rect.y, right_rect.h);
 			return -EINVAL;
+#endif
 		}
 	}
 
